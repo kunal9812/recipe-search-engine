@@ -20,6 +20,14 @@ export async function searchByIngredients(
 
   const resolvedTerms = await Promise.all(terms.map(resolveIngredient));
 
+  // Earlier-typed ingredients are weighted higher — people tend to list
+  // their main/staple ingredient first (e.g. "rice, tomato" implies rice
+  // is the point of the dish, tomato is secondary)
+  const weightByLabel = new Map<string, number>();
+  resolvedTerms.forEach((label, idx) => {
+    weightByLabel.set(label, resolvedTerms.length - idx);
+  });
+
   const resultsPerIngredient = await Promise.all(
     resolvedTerms.map((term) => searchMealsByIngredient(term))
   );
@@ -38,10 +46,15 @@ export async function searchByIngredients(
     }
   });
 
-  const ranked: RankedRecipeSummary[] = Array.from(tally.values()).map(
-    ({ meal, matched }) => {
-      const cuisine = (meal.strArea as string | null) ?? null;
-      return {
+  const withScore = Array.from(tally.values()).map(({ meal, matched }) => {
+    const cuisine = (meal.strArea as string | null) ?? null;
+    const weightedScore = Array.from(matched).reduce(
+      (sum, label) => sum + (weightByLabel.get(label) ?? 0),
+      0
+    );
+
+    return {
+      summary: {
         id: meal.idMeal,
         title: meal.strMeal,
         image: meal.strMealThumb,
@@ -50,15 +63,22 @@ export async function searchByIngredients(
         matchCount: matched.size,
         matchedIngredients: Array.from(matched),
         totalSearched: resolvedTerms.length,
-      };
-    }
-  );
-
-  ranked.sort((a, b) => {
-    if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
-    if (a.isIndian !== b.isIndian) return a.isIndian ? -1 : 1;
-    return a.title.localeCompare(b.title);
+      } satisfies RankedRecipeSummary,
+      weightedScore,
+    };
   });
 
-  return ranked;
+  // Weighted score first (respects ingredient order), then raw match
+  // count as a tiebreaker, then Indian-cuisine boost, then alphabetical
+  withScore.sort((a, b) => {
+    if (b.weightedScore !== a.weightedScore)
+      return b.weightedScore - a.weightedScore;
+    if (b.summary.matchCount !== a.summary.matchCount)
+      return b.summary.matchCount - a.summary.matchCount;
+    if (a.summary.isIndian !== b.summary.isIndian)
+      return a.summary.isIndian ? -1 : 1;
+    return a.summary.title.localeCompare(b.summary.title);
+  });
+
+  return withScore.map((entry) => entry.summary);
 }
