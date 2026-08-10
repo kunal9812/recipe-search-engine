@@ -172,4 +172,4 @@ autocomplete.
 
 ---
 
-Built by [Kunal Yadav](https://github.com/kunal9812).
+Built by [Kunal Yadav](https://github.com/kunal9812)
